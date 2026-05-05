@@ -1,0 +1,112 @@
+import json, os, time
+from datetime import datetime
+
+# 1. Faylları idarə etmək üçün təmiz funksiyalar
+def load_data(file, default):
+    if not os.path.exists(file):
+        with open(file, "w", encoding="utf-8") as f:
+            json.dump(default, f, indent=4)
+        return default
+    with open(file, "r", encoding="utf-8") as f:
+        try:
+            return json.load(f)
+        except: return default
+
+def save_data(file, data):
+    with open(file, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=4)
+
+def log_event(user, msg):
+    log_file = f"history_{user}.log"
+    with open(log_file, "a", encoding="utf-8") as f:
+        f.write(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {msg}\n")
+
+# 2. Giriş Sistemi
+def login(users):
+    uname = input("İstifadəçi adı: ").lower()
+    user = next((u for u in users if u["username"] == uname), None)
+    
+    if not user:
+        print("İstifadəçi tapılmadı!")
+        return None
+
+    while True:
+        if user["lock_until"] and time.time() < user["lock_until"]:
+            rem = int(user["lock_until"] - time.time())
+            print(f"Bloklanıb! {rem} saniyə gözləyin...")
+            time.sleep(1); continue
+
+        pwd = input("Parol: ")
+        if user["password"] == pwd:
+            user["failed_attempts"] = 0
+            user["lock_until"] = None
+            save_data("users.json", users)
+            log_event(uname, "LOGIN_SUCCESS")
+            return user
+        else:
+            user["failed_attempts"] += 1
+            if user["failed_attempts"] >= 3:
+                user["lock_until"] = time.time() + 10 
+                user["failed_attempts"] = 0
+                print("10 saniyəlik blok!")
+            save_data("users.json", users)
+            print("Səhv parol!")
+
+# 3. Alış-veriş Məntiqi
+def main_app(user, users, products):
+    while True:
+        print(f"\n--- {user['username'].upper()} (Balans: {user['balance']} AZN) ---")
+        print("1) Mağaza | 2) Səbət | 3) Tarixçə | 0) Çıxış")
+        choice = input("Seçim: ")
+
+        if choice == "1":
+            # Kateqoriyalar
+            cats = list(products.keys())
+            for i, cat in enumerate(cats, 1): print(f"{i}. {cat}")
+            c_idx = int(input("Seç: ")) - 1
+            sel_cat = cats[c_idx]
+
+            for p in products[sel_cat]: print(f"{p['id']}. {p['name']} - {p['price']} AZN")
+            p_id = int(input("ID daxil et: "))
+            item = next(p for p in products[sel_cat] if p["id"] == p_id)
+
+            qty = int(input("Miqdar: "))
+            if input("Səbətə atmaq üçün 'b' yazın: ").lower() == 'b':
+                b_file = f"basket_{user['username']}.json"
+                basket = load_data(b_file, [])
+                basket.append({"name": item["name"], "total": item["price"]*qty})
+                save_data(b_file, basket)
+                log_event(user['username'], f"Əlavə: {item['name']}")
+
+        elif choice == "2":
+            # Səbət və Checkout
+            b_file = f"basket_{user['username']}.json"
+            basket = load_data(b_file, [])
+            total = sum(i["total"] for i in basket)
+            print(f"Cəm: {total} AZN")
+            if input("Almağa təsdiq (checkout): ") == "checkout":
+                if user["balance"] >= total:
+                    user["balance"] -= total
+                    save_data(b_file, [])
+                    save_data("users.json", users)
+                    log_event(user['username'], f"ALINDI: {total} AZN")
+                    print("Uğurlu!")
+                else: print("Balans çatmır!")
+
+        elif choice == "0": break
+
+if __name__ == "__main__":
+    u_list = [
+        {"username": "akif", "password": "123", "balance": 200.0, "failed_attempts": 0, "lock_until": None},
+        {"username": "nuray", "password": "456", "balance": 150.0, "failed_attempts": 0, "lock_until": None}
+    ]
+    p_list = {"Elektronika": [{"id": 1, "name": "Qulaqlıq", "price": 35.0}]}
+
+    save_data("users.json", u_list)
+    
+    users = load_data("users.json", u_list)
+    prods = load_data("products.json", p_list)
+
+    active_user = login(users)
+    if active_user: main_app(active_user, users, prods)
+    
